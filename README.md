@@ -23,3 +23,7 @@ See `./build_openbsd_qcow2.sh -h` for more information.
 
 * Build a standard image: `./build_openbsd_qcow2.sh -r 7.5 --image-file openbsd.qcow2 -b`
 * Build a customized image (small disk size, custom disklabel, disabled sets): `./build_openbsd_qcow2.sh -r 7.5 --image-file openbsd-min.qcow2 --disklabel custom/disklabel.5g -s 5 --sets "-game*.tgz -x*.tgz" -b`
+
+When building an image based on snapshots, you may wish to clean up the set
+mirror first. Snapshots change frequently, and rerunning when they've changed
+may lead to corrupt snapshot images.

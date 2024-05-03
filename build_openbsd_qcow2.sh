@@ -37,6 +37,8 @@ OPENBSD_ARCH=amd64
 OPENBSD_TRUSTED_MIRROR="https://ftp.openbsd.org/pub/OpenBSD/${OPENBSD_VERSION}"
 OPENBSD_MIRROR="https://cdn.openbsd.org/pub/OpenBSD/${OPENBSD_VERSION}"
 
+DO_SIGNIFY="true"
+
 IMAGE_SIZE=20
 IMAGE_NAME="${PATH_IMAGES}/openbsd${v}_$(date +%Y-%m-%d).qcow2"
 
@@ -59,12 +61,12 @@ function exec_cmd   {
     if [ "$DRY_RUN" == "DEBUG" ] ; then
         if [[ $1 == "bg" ]]; then
             shift
-            echo "[DRY-RUN] $* &"
+            echo "[DRY-RUN] $* &" >&2
         else
-            echo "[DRY-RUN] $*"
+            echo "[DRY-RUN] $*" >&2
         fi
     else
-        echo "[CMD] $*"
+        echo "[CMD] $*" >&2
         if [[ $1 == "bg" ]]; then
             shift
             $* &
@@ -95,10 +97,14 @@ function check_for_programs {
     check_program curl
 }
 
+function check_snaps {
+    v="$(exec_cmd curl --fail -sSL "${OPENBSD_TRUSTED_MIRROR}/${OPENBSD_ARCH}/" | grep -Eo 'base[[:digit:]]{2}.tgz' | head -n 1 | grep -Eo '[[:digit:]]+')"
+}
+
 function build_mirror {
     files="base${v}.tgz bsd bsd.mp bsd.rd comp${v}.tgz game${v}.tgz man${v}.tgz pxeboot xbase${v}.tgz xfont${v}.tgz xserv${v}.tgz xshare${v}.tgz"
 
-    exec_cmd curl -C - -O --create-dirs --output-dir "${PATH_MIRROR}/pub/OpenBSD/${OPENBSD_VERSION}" "${OPENBSD_TRUSTED_MIRROR}/openbsd-${v}-base.pub"
+    [[ "${DO_SIGNIFY}" = "true" ]] && exec_cmd curl -C - -O --create-dirs --output-dir "${PATH_MIRROR}/pub/OpenBSD/${OPENBSD_VERSION}" "${OPENBSD_TRUSTED_MIRROR}/openbsd-${v}-base.pub"
 
     for i in $files SHA256.sig
     do
@@ -110,8 +116,10 @@ function build_mirror {
 
     exec_cmd cd "${PATH_MIRROR}/pub/OpenBSD/${OPENBSD_VERSION}/${OPENBSD_ARCH}"
     exec_cmd ls -l | tail -n +2 | exec_cmd tee index.txt
-    exec_cmd $SIGNIFY_CMD -C -p "../openbsd-${v}-base.pub" -x SHA256.sig -- $files
-    [[ "$?" != 0 ]] && fail "Signature verifications failed"
+    if [[ "${DO_SIGNIFY}" = "true" ]]; then
+        exec_cmd $SIGNIFY_CMD -C -p "../openbsd-${v}-base.pub" -x SHA256.sig -- $files
+        [[ "$?" != 0 ]] && fail "Signature verifications failed"
+    fi
 
     exec_cmd cd "${TOP_DIR}"
     exec_cmd cp -f "${INSTALLCONF}" "${PATH_MIRROR}/install.conf"
@@ -155,7 +163,7 @@ function create_image {
 }
 
 function qemu_enable_kvm {
-    if exec_cmd grep -E 'vmx|svm' /proc/cpuinfo 2>&1 > /dev/null ; then
+    if exec_cmd grep -E 'vmx|svm' /proc/cpuinfo > /dev/null 2>&1; then
         [[ -w /dev/kvm ]] && echo -n "-enable-kvm"
     fi
 }
@@ -257,7 +265,7 @@ while [ $# -ge 1 ]; do
 done
 
 [[ ! "${IMAGE_SIZE}"      =~ ^[0-9]+$                                      ]] && fail "Invalid image size"
-[[ ! "${OPENBSD_VERSION}" =~ ^[0-9]+\.[0-9+]$                              ]] && fail "Invalid OpenBSD version"
+[[ ! "${OPENBSD_VERSION}" =~ ^([0-9]+\.[0-9+]|snapshots)$                  ]] && fail "Invalid OpenBSD version"
 [[ ! "${HOST_NAME}"       =~ ^[a-z0-9-]+$                                  ]] && fail "Invalid hostname"
 [[ ! "${HTTP_SERVER}"     =~ ^[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}$ ]] && fail "${HTTP_SERVER} is not an IPv4"
 [[ ! -e "${DISKLABEL}"                                                     ]] && fail "Non existing disklabel file"
@@ -269,6 +277,10 @@ if [[ -z "$RUN" ]]; then
     exit 0
 else
     v=${OPENBSD_VERSION//./}
+    if [[ "${OPENBSD_VERSION}" = "snapshots" ]]; then
+        check_snaps
+        DO_SIGNIFY="false"
+    fi
     SETS="${SETS} site${v}.tgz"
 
     report "[1/7] Check for dependencies"
